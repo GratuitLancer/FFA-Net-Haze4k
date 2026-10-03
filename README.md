@@ -1,124 +1,232 @@
-##  [FFA-Net: Feature Fusion Attention Network for Single Image Dehazing](https://arxiv.org/abs/1911.07559) (AAAI 2020)
- Official implementation.
+# FFA-Net-Haze4k for Single Image Dehazing
 
----
+Fork: <https://github.com/GratuitLancer/FFA-Net-Haze4k>
 
-by Xu Qin, Zhilin Wang et al.    Peking University and Beijing University of Aeronautics & Astronautics.
+This fork retains the original PyTorch FFA model, attention blocks, residual
+groups, loss functions, and PSNR/SSIM metrics. The workflow is lightly refactored
+to separate configuration, dataset construction, training, and checkpoint I/O.
+Existing Haze4K support and original checkpoint parameter names are preserved.
 
-### Citation
+## COSC428 Research Project
 
-@inproceedings{qin2020ffa,  
-  title={FFA-Net: Feature fusion attention network for single image dehazing},  
-  author={Qin, Xu and Wang, Zhilin and Bai, Yuanchao and Xie, Xiaodong and Jia, Huizhu},  
-  booktitle={Proceedings of the AAAI Conference on Artificial Intelligence},  
-  volume={34},  
-  number={07},  
-  pages={11908--11915},  
-  year={2020}  
+This repository contains an adaptation of **FFA-Net (Feature Fusion Attention
+Network)** for a COSC428 Research Project on single-image dehazing. The project
+uses the Haze4K dataset to train and evaluate a deep neural network that
+reconstructs clear images from hazy observations.
+
+The implementation is based on the original FFA-Net work by Qin et al. and has
+been modified to support:
+
+- Haze4K training and test splits;
+- automatic hazy/ground-truth image pairing;
+- GPU training with CUDA-enabled PyTorch;
+- Haze4K checkpoint discovery and inference;
+- configurable training, evaluation, and prediction paths.
+
+## Research Objective
+
+Image dehazing aims to recover scene visibility, colour, and structural detail
+that have been degraded by atmospheric haze. This project investigates how the
+channel-attention and pixel-attention mechanisms in FFA-Net perform when trained
+on Haze4K.
+
+The main experimental workflow is:
+
+1. Train FFA-Net using paired hazy and ground-truth images.
+2. Evaluate the model on the Haze4K test split.
+3. Generate dehazed predictions for qualitative inspection.
+4. Compare reconstructed images using PSNR and SSIM.
+
+## Haze4K Dataset
+
+The Haze4K dataset can be downloaded from Baidu Netdisk:
+
+- Download link: <https://pan.baidu.com/share/init?surl=41MW0YAvjFcydlroQZZizA>
+- Password: `cmmr`
+
+After downloading, extract the dataset into `data/Haze4K` using the following
+structure:
+
+```text
+FFA-Net/
+|-- data/
+|   `-- Haze4K/
+|       |-- train/
+|       |   |-- haze/
+|       |   |   `-- *.png
+|       |   |-- gt/
+|       |   |   `-- *.png
+|       |   `-- trans/
+|       `-- test/
+|           |-- haze/
+|           |   `-- *.png
+|           |-- gt/
+|           |   `-- *.png
+|           `-- trans/
+|-- net/
+|-- requirements.txt
+`-- README.md
+```
+
+The loader pairs each hazy image with its ground-truth image using the numeric
+identifier before the first underscore. For example,
+`1000_0.74_1.6.png` is paired with `1000.png`. The `trans` directories are not
+required by the current training pipeline.
+
+## Environment Setup
+
+The project has been tested on Windows with an NVIDIA GPU and a CUDA-enabled
+PyTorch installation.
+
+Create and prepare the virtual environment:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+For NVIDIA GPU training, install the CUDA build of PyTorch. The following
+command installs the CUDA 13.0 build used during this project:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --upgrade --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu130
+```
+
+Verify that PyTorch can access the GPU:
+
+```powershell
+.\.venv\Scripts\python.exe -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU only')"
+```
+
+## Training
+
+Run training from the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe net\main.py --data_root F:\FFA-Net\data --trainset haze4k_train --testset haze4k_test --blocks 20 --gps 3 --bs 2 --crop_size 240 --lr 0.0001 --steps 100000 --eval_step 5000
+```
+
+CUDA is selected automatically when a compatible GPU is available. Depending
+on GPU memory, `--bs` can be increased or reduced. Haze4K images have different
+dimensions, so random cropping is enabled by default for batched training.
+
+Checkpoints are saved using the following naming convention:
+
+```text
+trained_models/haze4k_train_ffa_3_20.pk
+```
+
+The checkpoint stores the model parameters, current training step, loss
+history, and the best PSNR and SSIM values.
+
+New checkpoints also include Adam optimizer state. The original best-model
+filename and rule (both PSNR and SSIM must improve) are retained. A companion
+`*_last.pk` checkpoint records the latest training progress at each evaluation
+and at the end of a run. Resume prefers this latest checkpoint and falls back to
+the original best-model file. Old checkpoints without optimizer state remain
+loadable. Use `--no_resume` or `--resume False` to train from scratch.
+
+`--model_dir` accepts a checkpoint directory or an explicit checkpoint filename.
+`--device cpu` and `--device cuda:0` are respected; the default is automatic
+selection. Relative data, checkpoint and output paths resolve from the repository
+root, regardless of the current working directory.
+
+## Inference
+
+Run inference on the complete Haze4K test split:
+
+```powershell
+.\.venv\Scripts\python.exe net\test.py --task haze4k --test_imgs data\Haze4K\test\haze --output_dir samples\haze4k_predictions
+```
+
+Run inference on only the first image as a quick check:
+
+```powershell
+.\.venv\Scripts\python.exe net\test.py --task haze4k --test_imgs data\Haze4K\test\haze --output_dir samples\haze4k_check --limit 1
+```
+
+Use `--model_dir` to load a checkpoint from a custom location:
+
+```powershell
+.\.venv\Scripts\python.exe net\test.py --task haze4k --model_dir net\trained_models\haze4k_train_ffa_3_20.pk --test_imgs data\Haze4K\test\haze
+```
+
+Predicted images are saved with the `_FFA.png` suffix. Add `--show` to display
+each hazy input and prediction during inference.
+
+The original script commands remain available. Module entry points work too:
+
+```powershell
+.\.venv\Scripts\python.exe -m net.main --data_root data --bs 2
+.\.venv\Scripts\python.exe -m net.test --task haze4k --test_imgs data/Haze4K/test/haze --limit 1
+.\.venv\Scripts\python.exe -m net.evaluate_samples --pred_dir samples/haze4k_predictions --gt_dir data/Haze4K/test/gt --csv samples/metrics.csv --plot samples/metrics.png
+```
+
+## Project Structure
+
+```text
+net/
+|-- main.py              Training CLI entry point
+|-- test.py              Inference CLI entry point
+|-- evaluate_samples.py  Saved-image evaluation, CSV and chart export
+|-- option.py            Explicit command-line configuration
+|-- data_utils.py        Paired datasets, preprocessing and loader factories
+|-- engine.py            Training and validation loop
+|-- runtime.py           Project paths, devices and checkpoint compatibility
+|-- metrics.py           PSNR and SSIM calculations
+`-- models/
+    |-- FFA.py           FFA-Net architecture
+    `-- PerceptualLoss.py
+```
+
+Importing workflow modules does not parse CLI arguments, scan datasets, create
+output directories, or start inference. Only the selected datasets are loaded.
+Training and inference share the original input normalization constants.
+Images smaller than the requested training crop are resized together before
+cropping, avoiding the original unbounded image-resampling loop.
+
+See [architecture notes](docs/architecture.md) for module responsibilities.
+
+## Regression Checks
+
+Run the small CPU checks without downloading data or weights:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+The checks cover paired augmentation, Haze4K/RESIDE loading, legacy
+DataParallel checkpoints, optimizer restoration, batch traversal, import
+behavior, and saved-image metrics.
+
+Datasets, weights, virtual environments, predictions, experiment histories,
+local backups and archives are excluded by `.gitignore`. Source figures in
+`fig/` and checkpoint README files remain versioned.
+
+## Original FFA-Net
+
+This project builds upon:
+
+> Qin, X., Wang, Z., Bai, Y., Xie, X., and Jia, H.
+> "FFA-Net: Feature Fusion Attention Network for Single Image Dehazing."
+> Proceedings of the AAAI Conference on Artificial Intelligence, 2020.
+
+Original paper: <https://arxiv.org/abs/1911.07559>
+
+```bibtex
+@inproceedings{qin2020ffa,
+  title={FFA-Net: Feature Fusion Attention Network for Single Image Dehazing},
+  author={Qin, Xu and Wang, Zhilin and Bai, Yuanchao and Xie, Xiaodong and Jia, Huizhu},
+  booktitle={Proceedings of the AAAI Conference on Artificial Intelligence},
+  volume={34},
+  number={07},
+  pages={11908--11915},
+  year={2020}
 }
-
-### Dependencies and Installation
-
-* python3
-* PyTorch>=1.0
-* NVIDIA GPU+CUDA
-* numpy
-* matplotlib
-* tensorboardX(optional)
-
-### Datasets Preparation
-
-Dataset website:[RESIDE](https://sites.google.com/view/reside-dehaze-datasets/) ; Paper arXiv version:[[RESIDE: A Benchmark for Single Image Dehazing](https://www.google.com/url?q=https%3A%2F%2Farxiv.org%2Fpdf%2F1712.04143.pdf&sa=D&sntz=1&usg=AFQjCNHzdt3kMDsvuJ7Ef6R4ev59OFeRYA)]
-
-<details>
-<summary> FILE STRUCTURE </summary>
-
 ```
-    FFA-Net
-    |-- README.md
-    |-- net
-    |-- data
-        |-- RESIDE
-            |-- ITS
-                |-- hazy
-                    |-- *.png
-                |-- clear
-                    |-- *.png
-            |-- OTS 
-                |-- hazy
-                    |-- *.jpg
-                |-- clear
-                    |-- *.jpg
-            |-- SOTS
-                |-- indoor
-                    |-- hazy
-                        |-- *.png
-                    |-- clear
-                        |-- *.png
-                |-- outdoor
-                    |-- hazy
-                        |-- *.jpg
-                    |-- clear
-                        |-- *.png
-```
-</details>
 
+## Academic Use
 
-### Metrics update
-|Methods|Indoor(PSNR/SSIM)|Outdoor(PSNR/SSIM)|
-|-|-|-|
-|DCP|16.62/0.8179|19.13/0.8148|
-|AOD-Net|19.06/0.8504|20.29/0.8765|
-|DehazeNet|21.14/0.8472|22.46/0.8514|
-|GFN|22.30/0.8800|21.55/0.8444|
-|GCANet|30.23/0.9800|-/-|
-|Ours|36.39/0.9886|33.57/0.9840|
-### Usage
-
-#### Train
-
-*Remove annotation from [main.py](net/main.py) if you want to use `tensorboard` or view `intermediate predictions`*
-
-*If you have more computing resources, expanding `bs`, `crop_size`, `gps`, `blocks` will lead to better results*
-
-train network on `ITS` dataset
-
- ```shell
- python main.py --net='ffa' --crop --crop_size=240 --blocks=19 --gps=3 --bs=2 --lr=0.0001 --trainset='its_train' --testset='its_test' --steps=500000 --eval_step=5000
- ```
-
-
-train network on `OTS` dataset
-
-
- ```shell
- python main.py --net='ffa' --crop --crop_size=240 --blocks=19 --gps=3 --bs=2 --lr=0.0001 --trainset='ots_train' --testset='ots_test' --steps=1000000 --eval_step=5000
- ```
-
-
-#### Test
-
-Trained_models are available at baidudrive: https://pan.baidu.com/s/1-pgSXN6-NXLzmTp21L_qIg with code: `4gat`
-
-or google drive: https://drive.google.com/drive/folders/19_lSUPrpLDZl9AyewhHBsHidZEpTMIV5?usp=sharing
-*Put  models in the `net/trained_models/`folder.*
-
-*Put your images in `net/test_imgs/`*
-
- ```shell
- python test.py --task='its or ots' --test_imgs='test_imgs'
-```
-#### Samples
-
-<p align='center'>
-<img src="fig/1400_2.png" height="306px" width='413px'> 
-<img src='fig/1400_2_FFA.png' height="306px" width='413px' >
-
-</div>
-
-<p align='center'>
-<img src='fig/0099_0.9_0.16.jpg' height="606px" width='413px'> 
-<img src='fig/0099_0_FFA.png' height="606px" width='413px' >
-
-</div>
-
+This repository is intended for research and coursework associated with the
+COSC428 Research Project. The original FFA-Net implementation, paper, and the
+Haze4K dataset should be cited where appropriate.

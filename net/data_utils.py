@@ -1,90 +1,151 @@
-import torch.utils.data as data
-import torchvision.transforms as tfs
-from torchvision.transforms import functional as FF
-import os,sys
-sys.path.append('.')
-sys.path.append('..')
-import numpy as np
-import torch
+"""Paired Haze4K/RESIDE datasets and explicitly constructed data loaders."""
+
+import math
 import random
+from pathlib import Path
+
+import torch
 from PIL import Image
-from torch.utils.data import DataLoader
-from matplotlib import pyplot as plt
-from torchvision.utils import make_grid
-from metrics import *
-from option import opt
-BS=opt.bs
-print(BS)
-crop_size='whole_img'
-if opt.crop:
-    crop_size=opt.crop_size
+from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms
+from torchvision.transforms import functional as TF
 
-def tensorShow(tensors,titles=None):
-        '''
-        t:BCWH
-        '''
-        fig=plt.figure()
-        for tensor,tit,i in zip(tensors,titles,range(len(tensors))):
-            img = make_grid(tensor)
-            npimg = img.numpy()
-            ax = fig.add_subplot(211+i)
-            ax.imshow(np.transpose(npimg, (1, 2, 0)))
-            ax.set_title(tit)
-        plt.show()
 
-class RESIDE_Dataset(data.Dataset):
-    def __init__(self,path,train,size=crop_size,format='.png'):
-        super(RESIDE_Dataset,self).__init__()
-        self.size=size
-        print('crop size',size)
-        self.train=train
-        self.format=format
-        self.haze_imgs_dir=os.listdir(os.path.join(path,'hazy'))
-        self.haze_imgs=[os.path.join(path,'hazy',img) for img in self.haze_imgs_dir]
-        self.clear_dir=os.path.join(path,'clear')
-    def __getitem__(self, index):
-        haze=Image.open(self.haze_imgs[index])
-        if isinstance(self.size,int):
-            while haze.size[0]<self.size or haze.size[1]<self.size :
-                index=random.randint(0,20000)
-                haze=Image.open(self.haze_imgs[index])
-        img=self.haze_imgs[index]
-        id=img.split('/')[-1].split('_')[0]
-        clear_name=id+self.format
-        clear=Image.open(os.path.join(self.clear_dir,clear_name))
-        clear=tfs.CenterCrop(haze.size[::-1])(clear)
-        if not isinstance(self.size,str):
-            i,j,h,w=tfs.RandomCrop.get_params(haze,output_size=(self.size,self.size))
-            haze=FF.crop(haze,i,j,h,w)
-            clear=FF.crop(clear,i,j,h,w)
-        haze,clear=self.augData(haze.convert("RGB") ,clear.convert("RGB") )
-        return haze,clear
-    def augData(self,data,target):
-        if self.train:
-            rand_hor=random.randint(0,1)
-            rand_rot=random.randint(0,3)
-            data=tfs.RandomHorizontalFlip(rand_hor)(data)
-            target=tfs.RandomHorizontalFlip(rand_hor)(target)
-            if rand_rot:
-                data=FF.rotate(data,90*rand_rot)
-                target=FF.rotate(target,90*rand_rot)
-        data=tfs.ToTensor()(data)
-        data=tfs.Normalize(mean=[0.64, 0.6, 0.58],std=[0.14,0.15, 0.152])(data)
-        target=tfs.ToTensor()(target)
-        return  data ,target
+VALID_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
+HAZE_MEAN = (0.64, 0.6, 0.58)
+HAZE_STD = (0.14, 0.15, 0.152)
+
+
+def normalize_haze(image):
+    return TF.normalize(TF.to_tensor(image), HAZE_MEAN, HAZE_STD)
+
+
+def image_paths(directory):
+    directory = Path(directory)
+    if not directory.is_dir():
+        raise FileNotFoundError(f"Image directory does not exist: {directory}")
+    return sorted(path for path in directory.iterdir() if path.is_file() and path.suffix.lower() in VALID_EXTENSIONS)
+
+
+class _PairedDataset(Dataset):
+    def __init__(self, pairs, train, size):
+        if not pairs:
+            raise ValueError("No paired images found")
+        if not isinstance(size, str) and (not isinstance(size, int) or size <= 0):
+            raise ValueError("Crop size must be a positive integer or 'whole_img'")
+        self.pairs = pairs
+        self.train = train
+        self.size = size
+        self.haze_imgs = [pair[0] for pair in pairs]
+
     def __len__(self):
-        return len(self.haze_imgs)
+        return len(self.pairs)
 
-import os
-pwd=os.getcwd()
-print(pwd)
-path='/home/zhilin007/VS/FFA-Net/data'#path to your 'data' folder
+    def __getitem__(self, index):
+        haze_path, clear_path = self.pairs[index]
+        with Image.open(haze_path) as source:
+            haze = source.convert("RGB")
+        with Image.open(clear_path) as source:
+            clear = source.convert("RGB")
+        # RESIDE clear images can include a border; retain the original alignment.
+        clear = TF.center_crop(clear, (haze.height, haze.width))
+        if isinstance(self.size, int):
+            # Upscale small pairs together instead of repeatedly resampling files.
+            # The old resampling loop could hang if every image was too small.
+            scale = max(1.0, self.size / haze.width, self.size / haze.height)
+            if scale > 1:
+                dimensions = (math.ceil(haze.width * scale), math.ceil(haze.height * scale))
+                haze = haze.resize(dimensions, Image.Resampling.BILINEAR)
+                clear = clear.resize(dimensions, Image.Resampling.BILINEAR)
+            top, left, height, width = transforms.RandomCrop.get_params(haze, (self.size, self.size))
+            haze = TF.crop(haze, top, left, height, width)
+            clear = TF.crop(clear, top, left, height, width)
+        return self.augData(haze, clear)
 
-ITS_train_loader=DataLoader(dataset=RESIDE_Dataset(path+'/RESIDE/ITS',train=True,size=crop_size),batch_size=BS,shuffle=True)
-ITS_test_loader=DataLoader(dataset=RESIDE_Dataset(path+'/RESIDE/SOTS/indoor',train=False,size='whole img'),batch_size=1,shuffle=False)
+    def augData(self, image, target):
+        if self.train:
+            if random.randint(0, 1):
+                image, target = TF.hflip(image), TF.hflip(target)
+            rotation = random.randint(0, 3) * 90
+            if rotation:
+                image, target = TF.rotate(image, rotation), TF.rotate(target, rotation)
+        return normalize_haze(image), TF.to_tensor(target)
 
-OTS_train_loader=DataLoader(dataset=RESIDE_Dataset(path+'/RESIDE/OTS',train=True,format='.jpg'),batch_size=BS,shuffle=True)
-OTS_test_loader=DataLoader(dataset=RESIDE_Dataset(path+'/RESIDE/SOTS/outdoor',train=False,size='whole img',format='.png'),batch_size=1,shuffle=False)
 
-if __name__ == "__main__":
-    pass
+class RESIDE_Dataset(_PairedDataset):
+    def __init__(self, path, train, size=240, format=".png"):
+        path = Path(path)
+        self.clear_dir = path / "clear"
+        self.format = format
+        pairs = []
+        for haze in image_paths(path / "hazy"):
+            clear = self.clear_dir / (haze.stem.split("_")[0] + format)
+            if not clear.is_file():
+                raise FileNotFoundError(f"Missing clear image for {haze.name}: {clear}")
+            pairs.append((haze, clear))
+        super().__init__(pairs, train, size)
+
+
+class Haze4K_Dataset(_PairedDataset):
+    def __init__(self, path, train, size=240):
+        self.path = Path(path)
+        self.haze_dir, self.gt_dir = self.path / "haze", self.path / "gt"
+        self.gt_imgs = {image.stem: image for image in image_paths(self.gt_dir)}
+        pairs = []
+        for haze in image_paths(self.haze_dir):
+            clear_id = haze.stem.split("_")[0]
+            if clear_id not in self.gt_imgs:
+                raise FileNotFoundError(f"Missing gt image for {haze.name} in {self.gt_dir}")
+            pairs.append((haze, self.gt_imgs[clear_id]))
+        super().__init__(pairs, train, size)
+
+
+DATASET_SPECS = {
+    "its_train": (RESIDE_Dataset, "RESIDE/ITS", True, ".png"),
+    "its_test": (RESIDE_Dataset, "RESIDE/SOTS/indoor", False, ".png"),
+    "ots_train": (RESIDE_Dataset, "RESIDE/OTS", True, ".jpg"),
+    "ots_test": (RESIDE_Dataset, "RESIDE/SOTS/outdoor", False, ".png"),
+    "haze4k_train": (Haze4K_Dataset, "Haze4K/train", True, None),
+    "haze4k_test": (Haze4K_Dataset, "Haze4K/test", False, None),
+}
+
+
+def build_loader(dataset_cls, dataset_path, train, batch_size, size, num_workers=0, **kwargs):
+    dataset = dataset_cls(dataset_path, train=train, size=size, **kwargs)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=train, num_workers=num_workers)
+
+
+def create_loader(name, data_root, batch_size=16, crop_size=240, num_workers=0):
+    try:
+        dataset_cls, relative_path, train, image_format = DATASET_SPECS[name]
+    except KeyError as error:
+        raise ValueError(f"Unknown dataset: {name}") from error
+    kwargs = {"format": image_format} if image_format is not None else {}
+    return build_loader(
+        dataset_cls, Path(data_root) / relative_path, train=train,
+        batch_size=batch_size if train else 1,
+        size=crop_size if train else "whole_img",
+        num_workers=num_workers, **kwargs,
+    )
+
+
+def create_loaders(options):
+    crop_size = options.crop_size if options.crop else "whole_img"
+    return (
+        create_loader(options.trainset, options.data_root, options.bs, crop_size, options.num_workers),
+        create_loader(options.testset, options.data_root, num_workers=options.num_workers),
+    )
+
+
+def tensorShow(tensors, titles=None):
+    """Retain the original optional image-display helper."""
+    from matplotlib import pyplot as plt
+    from torchvision.utils import make_grid
+
+    titles = titles or [str(index) for index in range(len(tensors))]
+    figure = plt.figure()
+    for index, (tensor, title) in enumerate(zip(tensors, titles), 1):
+        axis = figure.add_subplot(len(tensors), 1, index)
+        axis.imshow(make_grid(tensor.detach().cpu()).permute(1, 2, 0).numpy())
+        axis.set_title(title)
+    plt.show()

@@ -1,0 +1,7 @@
+﻿--extra-index-url https://download.pytorch.org/whl/cu130
+
+torch==2.11.0+cu130
+torchvision==0.26.0+cu130
+numpy==2.4.3
+Pillow==12.1.1
+matplotlib==3.10.9
