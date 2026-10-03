@@ -162,6 +162,39 @@ The original script commands remain available. Module entry points work too:
 .\.venv\Scripts\python.exe -m net.evaluate_samples --pred_dir samples/haze4k_predictions --gt_dir data/Haze4K/test/gt --csv samples/metrics.csv --plot samples/metrics.png
 ```
 
+## Results Comparison
+
+These three Haze4K test examples use existing predictions from
+`samples/haze4k_test_check/`. The matching hazy inputs and ground-truth images
+come from `data/Haze4K/test/`. The images below are unchanged copies stored in
+`docs/assets/results/` so the comparison is visible on GitHub.
+
+| Sample | Hazy Input | FFA-Net Output | Ground Truth |
+| --- | --- | --- | --- |
+| 100 — city | <img src="docs/assets/results/100_hazy.png" alt="Hazy city scene, sample 100" width="220"> | <img src="docs/assets/results/100_ffa.png" alt="FFA-Net city prediction, sample 100" width="220"> | <img src="docs/assets/results/100_gt.png" alt="Ground-truth city scene, sample 100" width="220"> |
+| 137 — road | <img src="docs/assets/results/137_hazy.png" alt="Hazy road scene, sample 137" width="220"> | <img src="docs/assets/results/137_ffa.png" alt="FFA-Net road prediction, sample 137" width="220"> | <img src="docs/assets/results/137_gt.png" alt="Ground-truth road scene, sample 137" width="220"> |
+| 1000 — indoor | <img src="docs/assets/results/1000_hazy.png" alt="Hazy indoor scene, sample 1000" width="220"> | <img src="docs/assets/results/1000_ffa.png" alt="FFA-Net indoor prediction, sample 1000" width="220"> | <img src="docs/assets/results/1000_gt.png" alt="Ground-truth indoor scene, sample 1000" width="220"> |
+
+### Metrics for the Displayed Examples
+
+Both the hazy input and FFA output are compared with the matching ground truth
+using `net/metrics.py`. Metrics are computed on the saved RGB images at their
+original resolution, with pixel values in [0, 1]. Higher PSNR and SSIM indicate
+closer agreement with the ground truth.
+
+| Sample | Hazy PSNR (dB) | FFA PSNR (dB) | Hazy SSIM | FFA SSIM |
+| --- | ---: | ---: | ---: | ---: |
+| 100 | 15.61 | 17.48 | 0.7223 | 0.8884 |
+| 137 | 8.20 | 16.35 | 0.6581 | 0.8809 |
+| 1000 | 21.35 | 20.32 | 0.9400 | 0.9229 |
+| Mean of these 3 examples | 15.05 | 18.05 | 0.7735 | 0.8974 |
+
+These are illustrative examples, rather than a full-test-set benchmark.
+Samples 100 and 137 improve on both metrics; sample 1000 scores below its
+hazy input on both, showing that dehazing does not improve every image.
+The source filenames and full-precision scores are available in
+[the comparison CSV](docs/assets/results/metrics.csv).
+
 ## Project Structure
 
 ```text
@@ -185,7 +218,8 @@ Training and inference share the original input normalization constants.
 Images smaller than the requested training crop are resized together before
 cropping, avoiding the original unbounded image-resampling loop.
 
-See [architecture notes](docs/architecture.md) for module responsibilities.
+See the architecture notes in [English](docs/architecture.md) or
+[Chinese](docs/architecture_cn.md) for module responsibilities.
 
 ## Regression Checks
 
@@ -202,6 +236,8 @@ behavior, and saved-image metrics.
 Datasets, weights, virtual environments, predictions, experiment histories,
 local backups and archives are excluded by `.gitignore`. Source figures in
 `fig/` and checkpoint README files remain versioned.
+The selected comparison images and metrics under `docs/assets/results/` are
+also versioned.
 
 ## Original FFA-Net
 

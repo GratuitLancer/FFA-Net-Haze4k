@@ -1,0 +1,4 @@
+sample_id,hazy,prediction,ground_truth,hazy_psnr,ffa_psnr,hazy_ssim,ffa_ssim
+100,data/Haze4K/test/haze/100_0.5_1.76.png,samples/haze4k_test_check/100_0.5_1.76_FFA.png,data/Haze4K/test/gt/100.png,15.609945068426816,17.48190453822511,0.7223281860351562,0.8884023427963257
+137,data/Haze4K/test/haze/137_0.99_1.98.png,samples/haze4k_test_check/137_0.99_1.98_FFA.png,data/Haze4K/test/gt/137.png,8.20081741347516,16.34886489508449,0.6581417322158813,0.8809195160865784
+1000,data/Haze4K/test/haze/1000_0.73_1.8.png,samples/haze4k_test_check/1000_0.73_1.8_FFA.png,data/Haze4K/test/gt/1000.png,21.34797709864562,20.320901635773524,0.9399942755699158,0.9228672981262207

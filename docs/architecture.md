@@ -1,40 +1,55 @@
-# 架构整理说明
+# Architecture Notes
 
-本次重构保留 PyTorch 框架、原有 `net/` 目录和 FFA 模型。模型的
-三个残差组、通道注意力、像素注意力、融合方式及参数名称均保持原样，
-`FFA.py`、`PerceptualLoss.py` 和 `metrics.py` 的实现未修改。
+[Chinese original](architecture_cn.md)
 
-## 模块职责
+This refactor preserves the PyTorch framework, the original `net/` directory,
+and the FFA model. The three residual groups, channel attention, pixel attention,
+feature fusion, and parameter names remain unchanged. The implementations of
+`FFA.py`, `PerceptualLoss.py`, and `metrics.py` have not been modified.
 
-| 模块 | 职责 |
+## Module Responsibilities
+
+| Module | Responsibility |
 | --- | --- |
-| `net/main.py` | 训练入口，组装数据、模型、损失和优化器 |
-| `net/option.py` | 显式解析训练参数并检查合法性 |
-| `net/data_utils.py` | Haze4K/RESIDE 配对、裁剪、增强、归一化和加载器工厂 |
-| `net/engine.py` | 训练、验证、学习率调整及恢复训练 |
-| `net/runtime.py` | 统一项目路径、设备选择和权重读写 |
-| `net/test.py` | 图片推理入口 |
-| `net/evaluate_samples.py` | 预测图片的 PSNR/SSIM、CSV 和图表导出 |
-| `net/models/` | 原有 FFA 网络与感知损失 |
+| `net/main.py` | Training entry point; assembles datasets, model, losses, and optimizer |
+| `net/option.py` | Explicitly parses and validates training arguments |
+| `net/data_utils.py` | Haze4K/RESIDE pairing, cropping, augmentation, normalization, and loader factories |
+| `net/engine.py` | Training, validation, learning-rate scheduling, and training resume |
+| `net/runtime.py` | Shared project paths, device selection, and checkpoint I/O |
+| `net/test.py` | Image inference entry point |
+| `net/evaluate_samples.py` | PSNR/SSIM evaluation of saved predictions, plus CSV and chart export |
+| `net/models/` | Original FFA network and perceptual loss |
 
-配置解析、数据扫描及目录创建均在显式调用后发生，模块导入不启动任务。
-原有 `python net/main.py` 等命令继续可用，也支持 `python -m net.main`。
-相对路径统一以项目根目录为基准；推理仍兼容 `net/` 下的旧输入和权重路径。
+Configuration parsing, dataset scanning, and directory creation occur only
+after explicit calls; importing modules does not start a task. Original commands
+such as `python net/main.py` remain available, alongside module entry points such
+as `python -m net.main`. Relative paths resolve from the project root. Inference
+also supports legacy input and checkpoint paths under `net/`.
 
-## 训练行为与兼容性
+## Training Behavior and Compatibility
 
-- 只构建所选训练集与验证集，Haze4K 文件仍按下划线之前的编号配对。
-- 训练迭代器在一轮数据结束后重建，避免每一步重新抽取首个批次。
-- 输入归一化、L1 损失、可选感知损失权重 0.04 和余弦学习率保持原设定。
-- 验证仍使用原 PSNR/SSIM 实现；最佳模型仍要求两个指标同时提升。
-- 最佳模型沿用原 `*.pk` 名称，新增 `*_last.pk` 保存最近进度及优化器状态。
-- 恢复优先读取最近进度，旧权重没有优化器状态时仍可加载。
-- 支持普通权重及带 `module.` 前缀的 DataParallel 权重。
-- 小于裁剪尺寸的图像对同步缩放，避免旧版重采样循环无法退出。
-- 未启用裁剪且批量大于 1 时，输入图片仍须尺寸一致。
+- Only the selected training and validation datasets are constructed. Haze4K
+  files are still paired by the identifier before the first underscore.
+- The training iterator is recreated after an epoch ends, avoiding the previous
+  behavior of obtaining the first batch from a new iterator at every step.
+- Input normalization, L1 loss, the optional perceptual-loss weight of 0.04, and
+  the cosine learning-rate schedule retain their original settings.
+- Validation uses the original PSNR/SSIM implementations. Both metrics must
+  improve before a new best-model checkpoint is saved.
+- Best-model checkpoints retain their original `*.pk` filenames. A new
+  `*_last.pk` checkpoint stores the latest progress and optimizer state.
+- Resume prefers the latest checkpoint. Legacy checkpoints remain loadable even
+  when they do not contain optimizer state.
+- Both plain model weights and DataParallel weights with the `module.` prefix
+  are supported.
+- Image pairs smaller than the requested crop size are resized together,
+  preventing the original image-resampling loop from running indefinitely.
+- With cropping disabled and a batch size greater than 1, input images must
+  still have matching dimensions.
 
-## 本地验证
+## Local Validation
 
-`python -m unittest discover -s tests -v` 使用小型临时图片与 CPU，
-检查导入行为、图像配对、同步增强、参数解析、权重兼容、连续批次、
-优化器恢复和图片评估，不下载数据或预训练网络。
+`python -m unittest discover -s tests -v` uses small temporary images and the
+CPU to check import behavior, image pairing, synchronized augmentation, argument
+parsing, checkpoint compatibility, consecutive batches, optimizer restoration,
+and saved-image evaluation. It does not download datasets or pretrained networks.
